@@ -1,0 +1,10 @@
+#lang simply-scheme
+(define (switch s)
+    (define (word-map w)
+    (cond ((or (equal? w 'I) (equal? w 'me)) 'you)
+          ((equal? w 'You) 'i)
+          ((equal? w 'you) 'me)
+          (else w)))
+    (if (empty? s)
+        '()
+      (se (word-map (first s)) (switch (bf s)))))

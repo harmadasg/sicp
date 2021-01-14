@@ -1,0 +1,3 @@
+Exercise 1.6.
+
+Scheme evaluates expressions in applicative order, so the the new-if version can't handle recursive procedures. (It just goes on and on)
