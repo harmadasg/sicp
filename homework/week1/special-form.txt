@@ -1,0 +1,2 @@
+Treating "or" as a special form can make some programs run faster, because the interpreter doesn't evaulate every expression. On the other hand it can be useful to treat "or" as an ordinary function if some logic needs to be executed while evaulating the boolean expressions.
+
