@@ -30,7 +30,7 @@
 (define (make-ordered-deck)
   (define (make-suit s)
     (every (lambda (rank) (word rank s)) '(A 2 3 4 5 6 7 8 9 10 J Q K)) )
-  (se (make-suit 'H) (make-suit 'S) (make-suit 'D) (make-suit 'C)) )
+  (se (make-suit 'H) (make-suit 'S) (make-suit 'D) (make-suit 'C) 'J 'J))
 
 (define (make-deck)
   (define (shuffle deck size)
@@ -41,20 +41,22 @@
     (if (= size 0)
 	deck
     	(move-card deck '() (random size)) ))
-  (shuffle (make-ordered-deck) 52) )
+  (shuffle (make-ordered-deck) 54) )
 
 (define (best-total cards)
-    (define (iter total aces cards)
+    (define (iter total aces jokers cards)
       (if (not (empty? cards))
              (let ((value (bl (first cards))))
-               (cond               
-                 ((number? value) (iter (+ total value) aces (bf cards)))
-                 ((equal? value 'A) (iter (+ total 11) (+ aces 1) (bf cards)))
-                 (else (iter (+ total 10) aces (bf cards)))))
-             (if (and (> total 22) (> aces 0))
-                 (iter (- total 10) (- aces 1) cards)
-                 total)))
-    (iter 0 0 cards))
+               (cond
+                 ((empty? value) (iter (+ total 11) aces (+ 1 jokers) (bf cards)))
+                 ((number? value) (iter (+ total value) aces jokers (bf cards)))
+                 ((equal? value 'A) (iter (+ total 11) (+ aces 1) jokers (bf cards)))
+                 (else (iter (+ total 10) aces jokers (bf cards)))))
+             (cond
+               ((and (> total 22) (> jokers 0))(iter 21 aces (- jokers 1) cards))
+               ((and (> total 22) (> aces 0))(iter (- total 10) (- aces 1) jokers cards))
+                 (else total))))
+    (iter 0 0 0 cards))
 
 (define (stop-at-17 customer-hand-so-far dealer-up-card)
     (< (best-total customer-hand-so-far) 17))
