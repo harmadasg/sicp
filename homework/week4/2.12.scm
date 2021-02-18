@@ -20,10 +20,25 @@
                    (max p1 p2 p3 p4))))
 
 (define (div-interval x y)
-  (mul-interval x 
-                (make-interval (/ 1.0 (upper-bound y))
-                               (/ 1.0 (lower-bound y)))))
+  (if (and (<= (lower-bound y) 0)
+	   (>= (upper-bound y) 0))
+      (error "Can't divide by an interval that spans zero.")
+      (mul-interval x
+		    (make-interval (/ 1 (upper-bound y))
+				   (/ 1 (lower-bound y))))))
 
 (define (sub-interval x y)
   (add-interval x (make-interval (- (upper-bound y))
 				 (- (lower-bound y)))))
+
+(define (make-center-percent center percent)
+    (let ((tolerance (* center (/ percent 100))))    
+    (make-interval
+     (- center tolerance)
+     (+ center tolerance))))
+
+(define (center i)
+  (/ (+ (lower-bound i) (upper-bound i)) 2))
+
+(define (percent i)
+    (- (* 100 (/ (upper-bound i) (center i))) 100))
