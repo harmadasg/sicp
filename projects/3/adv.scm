@@ -15,7 +15,6 @@
    (people '())
    (entry-procs '())
    (exit-procs '()))
-  (method (type) 'place)
   (method (neighbors) (map cdr directions-and-neighbors))
   (method (exits) (map car directions-and-neighbors))
   (method (look-in direction)
@@ -32,7 +31,7 @@
     (if (memq new-person people)
 	(error "Person already in this place" (list name new-person)))
 	(for-each (lambda (person) (ask person 'notice new-person)) people)
-    (set! people (cons new-person people))
+	(set! people (cons new-person people))
     (for-each (lambda (proc) (proc)) entry-procs)
     'appeared)
   (method (gone thing)
@@ -68,12 +67,27 @@
     (set! exit-procs '())
     (set! entry-procs '())
     'cleared) )
-	
+
 (define-class (locked-place name)
 	(parent (place name))
 	(instance-vars (locked? #t))
 	(method (unlock) (set! locked? #f) 'unlocked)
 	(method (may-enter? person) (not locked?)) )
+	
+(define-class (restaurant name food-class price)
+	(parent (place name))
+	(method (restaurant?) #t)
+	(method (menu) (list (cons (ask food-class 'name) price)))
+	(method (sell person food-name)
+		(let ((record (assoc food-name (ask self 'menu))))
+			(if (not record)
+				#f
+				(let ((food (instantiate food-class)))
+					(cond
+						((police? person) (ask self 'appear food) food)
+						((ask person 'pay-money price) (ask self 'appear food) food)
+						(else #f)))))))
+
 	
 (define-class (hotspot password)
 	(parent (place 'hotspot))
@@ -115,6 +129,7 @@
 					(error "No car found by ticket number"))
 					(let ((owner (ask ticket 'possessor)))
 						(ask owner 'lose ticket)
+						(ask self 'gone ticket)
 						(ask owner 'take vehicle)
 						(insert! num #f table))))) )
 
@@ -125,51 +140,56 @@
    (saying ""))
   (initialize
    (ask place 'enter self)
-   (ask self 'put 'strength 6))
-  (method (type) 'person)
+   (ask self 'put 'strength 6)
+   (ask self 'put 'money 100))
+  (method (get-money amount) (let ((current (ask self 'money))) (ask self 'put 'money (+ current amount))))
+  (method (pay-money amount)
+	(let ((current (ask self 'money)))
+		(let ((new-amount (- current amount)))
+			(if (< new-amount 0)
+				#f
+				(begin
+					(ask self 'put 'money new-amount)
+					#t)))))
   (method (look-around)
     (map (lambda (obj) (ask obj 'name))
 	 (filter (lambda (thing) (not (eq? thing self)))
-		 (append (ask place 'things) (ask place 'people)))))
+		 (append (ask place 'things) (ask place 'people)))))		 
   (method (take thing)
     (cond ((not (thing? thing)) (error "Not a thing" thing))
 	  ((not (memq thing (ask place 'things)))
 	   (error "Thing taken not at this place"
 		  (list (ask place 'name) thing)))
 	  ((memq thing possessions) (error "You already have it!"))
-	  (else
-	   (announce-take name thing)
-	   (set! possessions (cons thing possessions))
-	       
-	   ;; If somebody already has this object...
-	   (for-each
-	    (lambda (pers)
-	      (if (and (not (eq? pers self)) ; ignore myself
-		       (memq thing (ask pers 'possessions)))
-		  (begin
-		   (ask pers 'lose thing)
-		   (have-fit pers))))
-	    (ask place 'people))
-	       
-	   (ask thing 'change-possessor self)
-	   'taken)))
-
+	  ((eq? (owner thing) 'no-one)
+		(announce-take name thing)
+		(set! possessions (cons thing possessions))
+		(ask thing 'change-possessor self)
+		'taken)
+	  ((not (ask thing 'may-take? self)) (error "Thing can't be taken, you are too week"))
+	  (else	
+		(let ((possessor (ask thing 'possessor)))
+			(ask possessor 'lose thing)
+			(announce-take name thing)
+			(set! possessions (cons thing possessions))
+			(have-fit possessor)
+			(ask thing 'change-possessor self)
+			'taken))))
   (method (lose thing)
     (set! possessions (delete thing possessions))
     (ask thing 'change-possessor 'no-one)
     'lost)
   (method (talk) (print saying))
   (method (set-talk string) (set! saying string))
+  (method (eat)
+	(let ((foods (filter (lambda (p) (edible? p)) possessions))
+		 (old-strength (ask self 'strength)))
+			(ask self 'put 'strength (+ old-strength (apply + (map (lambda (f) (ask f 'calories)) foods))))
+			(for-each (lambda (f) (ask self 'lose f) (ask place 'gone f)) foods)))			
   (method (exits) (ask place 'exits))
   (method (notice person) (ask self 'talk))
   (method (person?) #t)
-  (method (go direction)
-    (let ((new-place (ask place 'look-in direction)))
-      (cond ((null? new-place)
-	     (error "Can't go" direction))
-		((not (ask new-place 'may-enter? self)) (error "Can't enter new place"))
-	    (else
-	     (ask place 'exit self)
+  (method (go-directly-to new-place)
 	     (announce-move name place new-place)
 	     (for-each
 	      (lambda (p)
@@ -177,21 +197,53 @@
 		(ask new-place 'appear p))
 	      possessions)
 	     (set! place new-place)
-	     (ask new-place 'enter self)))))
+	     (ask new-place 'enter self))
+  (method (go direction)
+    (let ((new-place (ask place 'look-in direction)))
+      (cond ((null? new-place)
+	     (error "Can't go" direction))
+		((ask new-place 'may-enter? self)
+		    (ask place 'exit self)
+            (ask self 'go-directly-to new-place))
+	    (else (error "Can't enter new place")))))
+
   (method (take-all) 
 	(let ((things (ask place 'things)))
-	  (let ((not-owned (filter (lambda (thing) (eq? (ask thing 'possessor) 'no-one)) things)))
-		(for-each (lambda (thing) (ask self 'take thing)) not-owned)))) )
+	  (let ((not-owned (filter (lambda (thing) (eq? (owner thing) 'no-one)) things)))
+		(for-each (lambda (thing) (ask self 'take thing)) not-owned))))
+
+  (method (buy food-name) 
+	(if (restaurant? place)
+		(let ((food (ask place 'sell self food-name)))
+			(if food
+				(ask self 'take food)
+				#f))
+		(error "Not at a restaurant"))) )				
 
 (define-class (thing name)
 	(parent (basic-object))
 	(instance-vars (possessor 'no-one))
-	(method (type) 'thing)
 	(method (thing?) #t)
+	(method (may-take? person)
+		(let ((possessor-strength (ask possessor 'strength))
+			 (taker-strength (ask person 'strength)))
+				(if (> taker-strength possessor-strength)
+					self
+					#f)))
 	(method (change-possessor new-possessor) (set! possessor new-possessor)) )
 	   
 (define-class (ticket number)
 	(parent (thing 'ticket)) )
+	
+(define-class (food calories)
+	(parent (thing 'food))
+	(initialize
+      (ask self 'put 'edible? #t)
+	  (ask self 'put calories calories)))
+
+(define-class (bagel)
+	(parent (food 5))
+	(class-vars (name 'bagel)))		  
 	
 (define-class (laptop)
 	(parent (thing 'laptop))
@@ -211,20 +263,22 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Implementation of thieves for part two
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(define *foods* '(pizza potstickers coffee))
-
 (define (edible? thing)
-  (member? (ask thing 'name) *foods*))
+  (ask thing 'edible?))
 
 (define-class (thief name initial-place)
   (parent (person name initial-place))
+    (initialize
+   (ask self 'put 'strength 15))
   (instance-vars
    (behavior 'steal))
-  (method (type) 'thief)
+  (method (thief?) #t)
 
   (method (notice person)
     (if (eq? behavior 'run)
-	(ask self 'go (pick-random (ask (usual 'place) 'exits)))
+	(let ((exits (ask (usual 'place) 'exits)))
+	  (if (null? exits) (error "BUSTED!")	  
+	  (ask self 'go (pick-random exits))))
 	(let ((food-things
 	       (filter (lambda (thing)
 			 (and (edible? thing)
@@ -236,6 +290,21 @@
 	       (set! behavior 'run)
 	       (ask self 'notice person)) )))) )
 
+(define-class (police name initial-place)
+  (parent (person name initial-place))
+  (class-vars
+     (jail (instantiate place 'jail)))
+  (initialize
+   (ask self 'put 'strength 99))
+  (method (police?) #t)
+
+  (method (notice person)
+    (if (thief? person)
+		(let ((things (ask person 'possessions)))
+			(ask self 'talk)
+			(for-each (lambda (t) (ask self 'take t)) things)
+			(ask person 'go-directly-to jail)))) )
+					
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Utility procedures
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -303,17 +372,35 @@
 (define (place? obj)
   (and (procedure? obj)
        (ask obj 'place?)))
-	
-; 2F
+	   
+(define (restaurant? obj)
+  (and (procedure? obj)
+       (ask obj 'restaurant?)))
+
+(define (police? obj)
+  (and (procedure? obj)
+       (ask obj 'police?)))
+
+(define (thief? obj)
+  (and (procedure? obj)
+       (ask obj 'thief?)))
+
+(define (name obj) (ask obj 'name))
+
+(define (inventory obj)
+  (if (person? obj)
+      (map name (ask obj 'possessions))
+      (map name (ask obj 'things))))
+
 (define (whereis person)
 	(if (person? person)
 		(ask (ask person 'place) 'name)
 		(error "Object not a person")))
 		
 (define (owner thing)
-        (if (eq? 'thing (ask thing 'type))
+        (if (thing? thing)
 			(let ((possessor (ask thing 'possessor)))
 				(if (person? possessor)
 					(ask possessor 'name)
 					possessor))
-           (error "Object not a thing")))		 
+           (error "Object not a thing")))
