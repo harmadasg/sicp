@@ -1,0 +1,33 @@
+#lang sicp
+(define make-account-and-serializer
+  (let ((counter 0))
+    (lambda (balance)
+      (set! counter (+ counter 1))
+      (let ((acc-num counter))
+        (define (withdraw amount)
+          (if (>= balance amount)
+              (begin (set! balance (- balance amount))
+                     balance)
+              "Insufficient funds"))
+        (define (deposit amount)
+          (set! balance (+ balance amount))
+          balance)
+        (let ((balance-serializer (make-serializer)))
+          (define (dispatch m)
+            (cond ((eq? m 'withdraw) (balance-serializer withdraw))
+                  ((eq? m 'deposit) (balance-serializer deposit))
+                  ((eq? m 'balance) balance)
+                  ((eq? m 'acc-num) acc-num)
+                  ((eq? m 'serializer) balance-serializer)
+                  (else (error "Unknown request -- MAKE-ACCOUNT"
+                               m))))
+          dispatch)))))
+
+(define (serialized-exchange account1 account2)
+  (if (< (account1 'acc-num) (account2 'acc-num))
+      (serialized-exchange account2 account1)
+      (let ((serializer1 (account1 'serializer))
+            (serializer2 (account2 'serializer)))
+        ((serializer1 (serializer2 exchange))
+         account1
+         account2))))
