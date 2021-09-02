@@ -61,8 +61,31 @@
 (define (ifelse env t/f exp1 exp2)  
   (cond ((eq? t/f 'true) (eval-line (make-line-obj exp1) env))
         ((eq? t/f 'false) (eval-line (make-line-obj exp2) env))   
-        (else (error "Input to IFELSE not true or false " t/f))))  
+        (else (error "Input to IFELSE not true or false " t/f)))) 
 
+(define (test env t/f) 
+  (cond ((eq? t/f 'true) (set-variable-value! '" test" 'true env))
+        ((eq? t/f 'false) (set-variable-value! '" test" 'false env))   
+        (else (error "Input to TEST not true or false " t/f))) 
+  '=no-value=)
+
+(define (iftrue env exp)
+  (let ((test (find-test-value env))) 
+    (cond ((eq? test 'true) (eval-line (make-line-obj exp) env))
+		  ((eq? test 'false) '=no-value=)
+		  (else (error "iftrue without TEST")))))
+
+(define (iffalse env exp)
+  (let ((test (find-test-value env))) 
+    (cond ((eq? test 'true) '=no-value=)
+		  ((eq? test 'false) (eval-line (make-line-obj exp) env))
+		  (else (error "iffalse without TEST")))))
+
+(define (find-test-value env)
+	(let ((value (lookup-variable-value '" test" env)))
+		  (cond ((or (eq? value 'true) (eq? value 'false)) value)
+			    ((eq? env the-global-environment) value)
+			    (else (find-test-value (enclosing-environment env))))))
 
 ;;; Problem B2   logo-pred
 

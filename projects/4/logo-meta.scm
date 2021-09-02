@@ -1,5 +1,11 @@
 ;;; logo-meta.scm      Part of programming project #4
 
+;;; To start the interpreter the following dependencies have to be loaded in the specified order:
+;;; (load "~cs61a/lib/obj.scm")
+;;; (load "~cs61a/lib/logo.scm")
+;;; (load "~cs61a/lib/logo-meta.scm")
+;;; (initialize-logo)
+
 ;;; Differences between the book and this version:  Eval and apply have
 ;;; been changed to logo-eval and logo-apply so as not to overwrite the Scheme
 ;;; versions of these routines. An extra procedure initialize-logo has been
@@ -30,7 +36,7 @@
 ;;; data abstraction procedures
 
 (define (variable? exp)
-  (eq? (first exp) ':))
+  (and (not (null? exp)) (eq? (first exp) ':)))
 
 (define (variable-name exp)
   (bf exp))
@@ -48,20 +54,96 @@
 		      (> . greaterp)))))
 
 (define (handle-infix value line-obj env)
-  value)   ;; This doesn't give an error message, so other stuff works.
+  (if (ask line-obj 'empty?)
+      value	
+      (let ((token (ask line-obj 'next)))
+        (if (not (infix-operator? token))
+            (begin (ask line-obj 'put-back token)  
+                   value)
+            (let ((proc (lookup-procedure (de-infix token)))
+                  (new-value (eval-prefix line-obj env)))
+              (handle-infix 
+                 (logo-apply proc (list value new-value) env)
+                 line-obj env))))))
+			
+	   
+(define (infix-operator? value)
+  (memq value '(+ - * / = < >)))
+
 
 
 ;;; Problem B5    eval-definition
 
 (define (eval-definition line-obj)
-  (error "eval-definition not written yet!"))
+  (let* ((name (ask line-obj 'next))
+        (formals (remove-colons (read-params line-obj)))
+		(arg-count (length formals))
+        (body (read-proc-body))
+		(step-enabled? #f)
+		(private-frame (make-private-frame line-obj)))
+    (set! the-procedures
+          (cons (list name 'compound arg-count (cons formals body) step-enabled? private-frame)
+                the-procedures))
+	'=no-value=))
+	
+(define (read-params line-obj)
+	(if (end-of-params? line-obj)
+		'()
+		(let ((next (ask line-obj 'next)))
+			(cons next (read-params line-obj)))))
+			
+(define (end-of-params? line-obj)
+	(or (ask line-obj 'empty?)
+		(let ((token (ask line-obj 'next)))
+			(if (eq? token 'static)
+				#t
+				(begin (ask line-obj 'put-back token)
+					#f)))))
 
+(define (remove-colons formals)
+	(map bf formals))
+	
+(define (read-proc-body)
+	(prompt "-> ")
+	(let ((line (logo-read)))
+		(if (and (= 1 (length line)) (eq? (car line) 'end))
+			'()
+			(cons line (read-proc-body)))))
+			
+(define (make-private-frame line-obj)
+	(let ((vars '()) (vals '()))
+		 (define (populate-frame line-obj)
+			(if (ask line-obj 'empty?)
+				(make-frame vars vals)
+				(let ((var (bf (ask line-obj 'next))))
+					(if (ask line-obj 'empty?) (error "Static variable without value"))
+						(let ((val (logo-eval line-obj the-global-environment)))					 
+							(set! vars (cons var vars))
+							(set! vals (cons val vals))
+							(populate-frame line-obj)))))
+		  (populate-frame line-obj)))														
+		
 
 ;;; Problem 6    eval-sequence
 
-(define (eval-sequence exps env)
-  (error "eval-sequence not written yet!"))
+(define (eval-sequence exps env step-flag)
+  (if (null? exps)
+    '=no-value=
+	(begin
+	  (debug step-flag (car exps))
+      (let ((result (eval-line (make-line-obj (car exps)) env)))
+        (cond ((eq? result '=no-value=) (eval-sequence (cdr exps) env step-flag))
+	          ((eq? result '=stop=) '=no-value=)
+			  ((and (pair? result) (eq? (car result) '=output=)) (cdr result))
+			  (else (list "You don't say what to do with" result)))))))
 
+(define (debug step-flag line)
+	(if step-flag
+		(begin
+			(logo-type line)
+			(logo-type ">>>")
+			(flush)
+			(logo-read))))
 
 
 
@@ -103,6 +185,11 @@
 (add-prim 'run '(1) run)
 (add-prim 'if '(2) logo-if)
 (add-prim 'ifelse '(3) ifelse)
+(add-prim 'test '(1) test)
+(add-prim 'iftrue '(1) iftrue)
+(add-prim 'ift '(1) iftrue)
+(add-prim 'iffalse '(1) iffalse)
+(add-prim 'iff '(1) iffalse)
 (add-prim 'equalp 2 (logo-pred (make-logo-arith equalp)))
 (add-prim 'lessp 2 (logo-pred (make-logo-arith <)))
 (add-prim 'greaterp 2 (logo-pred (make-logo-arith >)))
@@ -114,6 +201,8 @@
 (add-prim 'stop 0 (lambda () '=stop=))
 (add-prim 'output 1 (lambda (x) (cons '=output= x)))
 (add-prim 'op 1 (lambda (x) (cons '=output= x)))
+(add-prim 'step 1 (lambda (p) (set-step-flag! (lookup-procedure p) #t) '=no-value=))
+(add-prim 'unstep 1 (lambda (p) (set-step-flag! (lookup-procedure p) #f) '=no-value=))
 
 (define (pcmd proc) (lambda args (apply proc args) '=no-value=))
 (add-prim 'cs 0 (pcmd cs))
@@ -167,7 +256,7 @@
 ;;; accumulated.
 
 (define (initialize-logo)
-  (set! the-global-environment (extend-environment '() '() '()))
+  (set! the-global-environment (extend-environment '(" test") '(undefined) '()))
   (set! the-procedures the-primitive-procedures)
   (driver-loop))
 
@@ -232,22 +321,41 @@
 							   (collect-args-special-cases (arg-count proc)
 									   line-obj
 									   env
-									   paren-flag) ))) )))
+									   paren-flag)
+									   env))) )))
 				  (eval-helper #f))
 				  
 (define (collect-args-special-cases arg-count line-obj env paren-flag)
 	(cond ((list? arg-count) (cons env (collect-n-args (car arg-count) line-obj env)))
-		  ((and paren-flag (< arg-count 0)) (collect-n-args arg-count line-obj env))
-		  ((< arg-count 0) (collect-n-args (abs arg-count) line-obj env))
+		  ((and (not paren-flag) (< arg-count 0)) (collect-n-args (abs arg-count) line-obj env))
 		  (else (collect-n-args arg-count line-obj env))))
 
-(define (logo-apply procedure arguments)
+(define (logo-apply procedure arguments env)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
         ((compound-procedure? procedure)
-	 (error "Compound procedures not implemented yet."))
+	 (eval-sequence
+           (procedure-body procedure)
+           (make-invocation-env procedure arguments env)
+		   (step-flag procedure)))
         (else
          (error "Unknown procedure type -- LOGO-APPLY " procedure))))
+		 
+(define (make-invocation-env procedure arguments env)
+   (extend-environment
+		(extend-frame-with-test (parameters procedure))
+		(extend-frame-with-undefined arguments)
+		(let ((frame (private-frame procedure)))
+			(extend-environment
+				 (frame-variables frame)
+				 (frame-values frame)
+				 env))))
+		 
+(define (extend-frame-with-test values)
+	(cons '" test" values))
+			
+(define (extend-frame-with-undefined values)
+	(cons 'undefined values))
 
 (define (collect-n-args n line-obj env)
   (cond ((= n 0) '())
@@ -259,7 +367,7 @@
       	       (let ((next (logo-eval line-obj env)))
         	 (cons next
 	      	       (collect-n-args (- n 1) line-obj env)) ))))
-	(else      
+	(else
       	 (let ((next (logo-eval line-obj env)))
            (cons next
 	      	 (collect-n-args (- n 1) line-obj env)) ))))
@@ -312,6 +420,12 @@
 (define (parameters proc) (car (text proc)))
 
 (define (procedure-body proc) (cdr (text proc)))
+
+(define (step-flag proc) (car (cddddr proc)))
+
+(define (set-step-flag! proc val) (set-car! (cddddr proc) val))
+
+(define (private-frame proc) (car (cdr (cddddr proc))))
 
 ;;; Section 4.1.3
 
